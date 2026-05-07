@@ -235,6 +235,19 @@ WHERE fw_id = $1
 LIMIT 1;"
 }
 
+# @brief Query device_id ↔ fw_id mapping from dev_join_fw table
+# Returns: fw_id|version|is_force if found, empty string if not found
+get_dev_join_fw_v() {
+  local device_id_param_v="$1"
+  local fw_id_param_v="$2"
+  
+  sqlite3 -separator '|' "$database_path_v/gateway_db.db" "
+SELECT fw_id, version, is_force
+FROM dev_join_fw
+WHERE device_id = $device_id_param_v AND fw_id = $fw_id_param_v
+LIMIT 1;"
+}
+
 # @brief Đóng gói phản hồi cho ESP32 theo rule 0xBB
 build_gateway_device_response_v() {
   local status_v="$1"
@@ -306,27 +319,45 @@ fi
 
 IFS='|' read -r local_fw_id_v local_version_v local_file_path_v local_file_size_v local_force_v local_sync_status_v <<< "$local_record_v"
 
+# @brief Check device permission from dev_join_fw table
+echo -e "${GREEN}[INFO] Validating device $device_id_v permission for firmware $firmware_id_v...${END}"
+dev_join_record_v=$(get_dev_join_fw_v "$device_id_v" "$firmware_id_v")
+
+if [[ -z "$dev_join_record_v" ]]; then
+  echo -e "${RED}[Error] Device $device_id_v does not have permission for firmware $firmware_id_v.${END}"
+  # Send error response: status=0x02 (Device not authorized)
+  response_hex_v=$(build_gateway_device_response_v 2 0 "$local_fw_id_v" "$local_version_v" "$local_file_size_v" 0)
+  publish_device_response_v "$device_id_v" "$response_hex_v"
+  exit 1
+fi
+
+# Parse dev_join_fw record: fw_id | version | is_force
+IFS='|' read -r dev_fw_id_v dev_version_v dev_is_force_v <<< "$dev_join_record_v"
+
+echo -e "${GREEN}[INFO] Device permission validated. Using priority flag from dev_join_fw: $dev_is_force_v${END}"
+
 if [[ "$realtime_mode_p" -eq 1 ]]; then
   echo -e "${GREEN}[INFO] Realtime mode: trust local cache and compare versions directly.${END}"
 else
   echo -e "${GREEN}[INFO] Non-realtime mode: local cache has been refreshed from server before decision.${END}"
 fi
 
-if [[ "$local_version_v" -le "$current_ver_v" ]]; then
-  echo -e "${YELLOW}[INFO] No update needed. Local firmware version is not newer than device version.${END}"
-  response_hex_v=$(build_gateway_device_response_v 0 0 "$local_fw_id_v" "$local_version_v" "$local_file_size_v" "$local_force_v")
+# Use version from dev_join_fw for comparison (device-specific version requirement)
+if [[ "$dev_version_v" -le "$current_ver_v" ]]; then
+  echo -e "${YELLOW}[INFO] No update needed. Required version $dev_version_v is not newer than device version $current_ver_v.${END}"
+  response_hex_v=$(build_gateway_device_response_v 0 0 "$local_fw_id_v" "$dev_version_v" "$local_file_size_v" "$dev_is_force_v")
   publish_device_response_v "$device_id_v" "$response_hex_v"
   exit 0
 fi
 
-echo -e "${GREEN}[INFO] Update available. Preparing device response packet.${END}"
+echo -e "${GREEN}[INFO] Update available. Required version: $dev_version_v, Device version: $current_ver_v${END}"
 
 if [[ ! -f "$local_file_path_v" ]]; then
   mkdir -p "$(dirname "$local_file_path_v")"
   : > "$local_file_path_v"
 fi
 
-response_hex_v=$(build_gateway_device_response_v 1 1 "$local_fw_id_v" "$local_version_v" "$local_file_size_v" "$local_force_v")
+response_hex_v=$(build_gateway_device_response_v 1 1 "$local_fw_id_v" "$dev_version_v" "$local_file_size_v" "$dev_is_force_v")
 publish_device_response_v "$device_id_v" "$response_hex_v"
 
 echo -e "${GREEN}[INFO] Device response published successfully.${END}"

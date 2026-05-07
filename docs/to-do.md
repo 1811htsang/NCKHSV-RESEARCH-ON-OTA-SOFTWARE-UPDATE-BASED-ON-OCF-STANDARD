@@ -7,6 +7,7 @@
 - [x] Implement lại các packet encode rule theo thiết kế mới để đảm bảo tính tương thích giữa các thành phần
 - [x] Rewrite lại clear script dành cho MQTT để tương thích với server_script mới
 - [x] Thiết kế bổ sung database hướng sqlite để lưu trữ thông tin thiết bị và trạng thái kết nối
+- [x] Validate lại toàn bộ hệ thống với kịch bản DFU để đảm bảo quá trình cập nhật firmware diễn ra suôn sẻ
 - [ ] Refactor lại wifi host setup để đảm bảo tính ổn định và dễ sử dụng với code style mới
 - [ ] Thực hiện kiểm tra với kịch bản DFU để đảm bảo quá trình cập nhật firmware diễn ra suôn sẻ
 - [ ] Kiểm tra lại source code trên Jetson Nano để đảm bảo tính tương thích và hiệu suất theo thiết kế mới

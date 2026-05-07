@@ -22,6 +22,8 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <assert.h>
+#include <nvs.h>
+#include <nvs_flash.h>
 
 /**
  * @brief Tính toán CRC-16 CCITT-FALSE (0xFFFF)
@@ -124,6 +126,20 @@ String mqtt_fw_list_glb[100];
 String fw_cur_partition_glb = "";
 
 /**
+ * @brief Khai báo cấu trúc để lưu trữ thông tin firmware có sẵn cho lựa chọn
+ */
+typedef struct {
+  uint16_t fw_id;
+  uint16_t version;
+  uint32_t size;
+  uint8_t force;  // Priority: 0=Optional, 1=Mandatory
+} FirmwareOption;
+
+FirmwareOption fw_options_glb[10];  // Tối đa 10 firmware options
+uint8_t fw_options_count_glb = 0;
+uint8_t fw_selected_index_glb = 0;
+
+/**
  * @brief Định nghĩa kích thước buffer cho việc đọc/ghi file khi tải firmware từ FTP về SD card
  */
 const size_t buffer_size = 2048;
@@ -223,6 +239,21 @@ void func_download_ftp(FTP32& ftp, String remoteFileName, String localFileName);
  * @brief Hàm để thực hiện cập nhật firmware từ file đã tải về trên SD card
  */
 void func_internal_upload();
+
+/**
+ * @brief Hàm để lưu version và firmware ID vào NVS storage
+ */
+void func_nvs_save_version(uint16_t fw_id, uint16_t version);
+
+/**
+ * @brief Hàm để đọc version từ NVS storage
+ */
+bool func_nvs_read_version(uint16_t& fw_id, uint16_t& version);
+
+/**
+ * @brief Hàm để chọn firmware từ danh sách có sẵn (ưu tiên firmware có force=1)
+ */
+void func_select_firmware();
 
 void setup() {
   // Thiết lập Serial
@@ -456,38 +487,65 @@ void func_mqtt_callback(char* topic, byte* payload, unsigned int length) {
   
   // Kiểm tra xem có phải gói tin 0xBB (Response từ Gateway) không
   if (hexData.startsWith("BB")) {
-    // Parse theo format: BB | Status(1B) | Count(1B) | FW_ID(2B) | Ver(2B) | Size(4B) | Force(1B) | CRC(2B)
-    // Tối thiểu 26 ký tự hex (13 bytes) nếu có 1 firmware
+    // Parse theo format: BB | Status(1B) | Count(1B) | [FW_ID(2B) | Ver(2B) | Size(4B) | Force(1B)]+ | CRC(2B)
+    // Mỗi firmware entry: 2 + 2 + 4 + 1 = 9 bytes (18 hex chars)
+    // Minimum: BB(2) + Status(2) + Count(2) + 1 entry(18) + CRC(4) = 28 hex chars
     
-    if (hexData.length() < 26) {
+    if (hexData.length() < 28) {
       Serial.println("ERROR: Invalid 0xBB packet length");
       return;
     }
     
     String statusHex = hexData.substring(2, 4);    // Byte 1: Status
     String countHex = hexData.substring(4, 6);     // Byte 2: Count
-    String fwIdHex = hexData.substring(6, 10);     // Bytes 3-4: FW_ID
-    String verHex = hexData.substring(10, 14);     // Bytes 5-6: Version
-    String sizeHex = hexData.substring(14, 22);    // Bytes 7-10: Size
-    String forceHex = hexData.substring(22, 24);   // Byte 11: Force
-    String crcHex = hexData.substring(24, 28);     // Bytes 12-13: CRC
-    
-    // Chuyển hex thành số nguyên
     uint8_t status = (uint8_t)strtol(statusHex.c_str(), NULL, 16);
     uint8_t count = (uint8_t)strtol(countHex.c_str(), NULL, 16);
-    uint16_t fw_id = (uint16_t)strtol(fwIdHex.c_str(), NULL, 16);
-    uint16_t version = (uint16_t)strtol(verHex.c_str(), NULL, 16);
-    uint32_t size = (uint32_t)strtol(sizeHex.c_str(), NULL, 16);
-    uint8_t force = (uint8_t)strtol(forceHex.c_str(), NULL, 16);
     
-    Serial.printf("Gateway Response - Status: %d, Count: %d, FW_ID: 0x%04X, Ver: 0x%04X, Size: %u bytes, Force: %d\n",
-                  status, count, fw_id, version, size, force);
+    Serial.printf("Gateway Response - Status: %d, Count: %d\n", status, count);
     
     if (status == 0x01) {  // UPDATE_AVAILABLE
       mqtt_responsestatus_glb = "UPDATE_AVAILABLE";
-      // Xây dựng tên file firmware từ FW_ID và version
-      mqtt_msg_tgfw_glb = String("fw_") + String(fw_id) + String("_v") + String(version) + String(".bin");
-      Serial.println("Update available: " + mqtt_msg_tgfw_glb);
+      
+      // Parse firmware entries
+      fw_options_count_glb = 0;
+      int hex_pos = 6;  // Bắt đầu từ byte sau Count
+      
+      for (int i = 0; i < count && fw_options_count_glb < 10; i++) {
+        if (hex_pos + 18 > hexData.length() - 4) {  // -4 for CRC
+          Serial.println("WARNING: Incomplete firmware entry, stopping parse");
+          break;
+        }
+        
+        String fwIdHex = hexData.substring(hex_pos, hex_pos + 4);
+        String verHex = hexData.substring(hex_pos + 4, hex_pos + 8);
+        String sizeHex = hexData.substring(hex_pos + 8, hex_pos + 16);
+        String forceHex = hexData.substring(hex_pos + 16, hex_pos + 18);
+        
+        uint16_t fw_id = (uint16_t)strtol(fwIdHex.c_str(), NULL, 16);
+        uint16_t version = (uint16_t)strtol(verHex.c_str(), NULL, 16);
+        uint32_t size = (uint32_t)strtol(sizeHex.c_str(), NULL, 16);
+        uint8_t force = (uint8_t)strtol(forceHex.c_str(), NULL, 16);
+        
+        fw_options_glb[fw_options_count_glb].fw_id = fw_id;
+        fw_options_glb[fw_options_count_glb].version = version;
+        fw_options_glb[fw_options_count_glb].size = size;
+        fw_options_glb[fw_options_count_glb].force = force;
+        
+        Serial.printf("  Option %d: FW_ID=0x%04X, Ver=0x%04X, Size=%u bytes, Force=%d\n",
+                      fw_options_count_glb, fw_id, version, size, force);
+        
+        fw_options_count_glb++;
+        hex_pos += 18;
+      }
+      
+      // Chọn firmware từ danh sách
+      func_select_firmware();
+      
+      // Xây dựng tên file firmware từ selected option
+      mqtt_msg_tgfw_glb = String("fw_") + String(fw_options_glb[fw_selected_index_glb].fw_id) + 
+                          String("_v") + String(fw_options_glb[fw_selected_index_glb].version) + String(".bin");
+      Serial.println("Selected firmware: " + mqtt_msg_tgfw_glb);
+      
       mqtt_loopstop_flg_glb = true;
     } else if (status == 0x00) {  // UPDATE_UNAVAILABLE
       mqtt_responsestatus_glb = "UPDATE_UNAVAILABLE";
@@ -541,9 +599,9 @@ void func_send_request(PubSubClient& mqtt_client_glb) {
   // Tính CRC-16
   uint16_t crc_value = calc_crc16(payload_bytes, byte_count);
   
-  // Xây dựng payload hoàn chỉnh với CRC (định dạng có khoảng trắng để khớp với gateway script)
+  // Xây dựng payload hoàn chỉnh với CRC (không có khoảng trắng để khớp với gateway script)
   char mqtt_payload[30];
-  sprintf(mqtt_payload, "%02X %02X %04X %04X %04X", device_id, control_code, fw_id, current_version, crc_value);
+  sprintf(mqtt_payload, "%02X%02X%04X%04X%04X", device_id, control_code, fw_id, current_version, crc_value);
   
   String requestTopic = "nckhsv/" + macAddress + "/request";
   mqtt_client_glb.publish(requestTopic.c_str(), mqtt_payload, true);
@@ -668,9 +726,128 @@ void func_internal_upload() {
   Update.writeStream(firmware);
   if (Update.end() && Update.isFinished()) {
     Serial.println("Update success. Rebooting...");
+    // Lưu thông tin firmware vào NVS trước khi restart
+    func_nvs_save_version(fw_options_glb[fw_selected_index_glb].fw_id,
+                          fw_options_glb[fw_selected_index_glb].version);
     esp_ota_set_boot_partition(update_partition);
     delay(1000);
     ESP.restart();
   }
   firmware.close();
+}
+
+/**
+ * @brief Lưu version và firmware ID vào NVS storage
+ */
+void func_nvs_save_version(uint16_t fw_id, uint16_t version) {
+  nvs_handle_t nvs_handle;
+  esp_err_t err;
+  
+  // Mở namespace "fw_info" cho việc đọc ghi
+  err = nvs_open("fw_info", NVS_READWRITE, &nvs_handle);
+  if (err != ESP_OK) {
+    Serial.printf("ERROR: Failed to open NVS handle: %s\n", esp_err_to_name(err));
+    return;
+  }
+  
+  // Lưu FW_ID
+  err = nvs_set_u16(nvs_handle, "fw_id", fw_id);
+  if (err != ESP_OK) {
+    Serial.printf("ERROR: Failed to save fw_id: %s\n", esp_err_to_name(err));
+  } else {
+    Serial.printf("Saved fw_id: 0x%04X\n", fw_id);
+  }
+  
+  // Lưu Version
+  err = nvs_set_u16(nvs_handle, "version", version);
+  if (err != ESP_OK) {
+    Serial.printf("ERROR: Failed to save version: %s\n", esp_err_to_name(err));
+  } else {
+    Serial.printf("Saved version: 0x%04X\n", version);
+  }
+  
+  // Commit lại NVS
+  err = nvs_commit(nvs_handle);
+  if (err != ESP_OK) {
+    Serial.printf("ERROR: Failed to commit NVS: %s\n", esp_err_to_name(err));
+  }
+  
+  // Đóng NVS handle
+  nvs_close(nvs_handle);
+}
+
+/**
+ * @brief Đọc version từ NVS storage
+ */
+bool func_nvs_read_version(uint16_t& fw_id, uint16_t& version) {
+  nvs_handle_t nvs_handle;
+  esp_err_t err;
+  
+  // Mở namespace "fw_info" ở chế độ readonly
+  err = nvs_open("fw_info", NVS_READONLY, &nvs_handle);
+  if (err != ESP_OK) {
+    Serial.printf("ERROR: Failed to open NVS handle: %s\n", esp_err_to_name(err));
+    return false;
+  }
+  
+  // Đọc FW_ID
+  err = nvs_get_u16(nvs_handle, "fw_id", &fw_id);
+  if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+    Serial.printf("ERROR: Failed to read fw_id: %s\n", esp_err_to_name(err));
+    nvs_close(nvs_handle);
+    return false;
+  }
+  
+  // Đọc Version
+  err = nvs_get_u16(nvs_handle, "version", &version);
+  if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+    Serial.printf("ERROR: Failed to read version: %s\n", esp_err_to_name(err));
+    nvs_close(nvs_handle);
+    return false;
+  }
+  
+  // Đóng NVS handle
+  nvs_close(nvs_handle);
+  
+  // Nếu không tìm thấy dữ liệu trong NVS, trả về false
+  if (err == ESP_ERR_NVS_NOT_FOUND) {
+    Serial.println("INFO: No firmware version found in NVS storage (first boot)");
+    return false;
+  }
+  
+  Serial.printf("Read from NVS - fw_id: 0x%04X, version: 0x%04X\n", fw_id, version);
+  return true;
+}
+
+/**
+ * @brief Chọn firmware từ danh sách có sẵn
+ * Chiến lược: Ưu tiên firmware có force=1 (bắt buộc cập nhật) nằm đầu tiên
+ * Nếu không có, chọn firmware đầu tiên trong danh sách
+ */
+void func_select_firmware() {
+  if (fw_options_count_glb == 0) {
+    Serial.println("ERROR: No firmware options available");
+    fw_selected_index_glb = 0;
+    return;
+  }
+  
+  // Nếu chỉ có 1 firmware, chọn nó
+  if (fw_options_count_glb == 1) {
+    fw_selected_index_glb = 0;
+    Serial.println("Only one firmware option available, selected: index 0");
+    return;
+  }
+  
+  // Tìm firmware có force=1 (bắt buộc cập nhật)
+  for (uint8_t i = 0; i < fw_options_count_glb; i++) {
+    if (fw_options_glb[i].force == 1) {
+      fw_selected_index_glb = i;
+      Serial.printf("Selected forced update firmware at index %d (force=1)\n", i);
+      return;
+    }
+  }
+  
+  // Nếu không có firmware bắt buộc, chọn firmware đầu tiên
+  fw_selected_index_glb = 0;
+  Serial.println("No forced update firmware found, selected first option (index 0)\n");
 }
