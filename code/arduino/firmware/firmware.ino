@@ -24,6 +24,42 @@
 #include <assert.h>
 
 /**
+ * @brief Tính toán CRC-16 CCITT-FALSE (0xFFFF)
+ * Hàm này khớp với thuật toán CRC-16 mà Python crc_hqx sử dụng
+ */
+uint16_t calc_crc16(const uint8_t *data, size_t len) {
+  uint16_t crc = 0xFFFF;
+  while (len--) {
+    uint16_t x = crc >> 8 ^ *data++;
+    x ^= x >> 4;
+    crc = (crc << 8) ^ (x << 12) ^ (x << 5) ^ x;
+  }
+  return crc;
+}
+
+/**
+ * @brief Chuyển đổi hex string sang byte array để tính CRC
+ */
+size_t hex_string_to_bytes(const char* hexStr, uint8_t* output, size_t maxLen) {
+  size_t byteCount = 0;
+  const char* ptr = hexStr;
+  while (*ptr && byteCount < maxLen) {
+    while (*ptr == ' ' || *ptr == '\t') ptr++;
+    if (!*ptr) break;
+    char hexPair[3] = {0};
+    if (isxdigit(ptr[0]) && isxdigit(ptr[1])) {
+      hexPair[0] = ptr[0];
+      hexPair[1] = ptr[1];
+      output[byteCount++] = (uint8_t)strtol(hexPair, NULL, 16);
+      ptr += 2;
+    } else {
+      ptr++;
+    }
+  }
+  return byteCount;
+}
+
+/**
  * @brief Định nghĩa chân nút bấm cho yêu cầu cập nhật và lựa chọn firmware
  */
 #define req_btn_pin_def 15
@@ -405,81 +441,124 @@ void func_login_mqtt() {
 
 void func_mqtt_callback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Message arrived [");
-  mqtt_msg_res_glb = "";
   Serial.print(topic);
-  DynamicJsonDocument doc(1024);
-  DeserializationError error = deserializeJson(doc, payload, length);
-  if (error) {
-    Serial.print("deserializeJson() failed: ");
-    Serial.println(error.c_str());
-    return;
+  Serial.println("]");
+  
+  // Chuyển payload byte sang chuỗi hex để dễ xử lý
+  String hexData = "";
+  for (int i = 0; i < length; i++) {
+    if (payload[i] < 0x10) hexData += "0";
+    hexData += String(payload[i], HEX);
   }
-  const char* status = doc["status"];
-  Serial.printf("\nResponse status: %s\n", status ? status : "(null)");
-  const char* message = doc["message"];
-  if (status == nullptr) return;
-  mqtt_responsestatus_glb = String(status);
-
-  if (strcmp(status, "BAD_REQUEST") == 0 || strcmp(status, "SERVER_UNEXPECTED_ERROR") == 0 || strcmp(status, "DEV_VAL_FAILED") == 0) {
-    Serial.printf("Error received: %s\n", message);
-    mqtt_msg_res_glb = String(message ? message : "");
-    mqtt_loopstop_flg_glb = true;
-  } else if (strcmp(status, "DEV_VAL_SUCCESS") == 0) {
-    Serial.printf("Validation success: %s\n", message);
-    fw_is_validated_glb = true;
-    mqtt_msg_res_glb = String(message ? message : "");
-  } else if (strcmp(status, "FW_LIST_RETR") == 0) {
-    JsonArray array = doc["mqtt_fw_list_glb"].as<JsonArray>();
-    Serial.println("Available firmware list:");
-    mqtt_firmwarecount_glb = 0;
-    for (JsonVariant v : array) {
-      const char* fname = v["name"]; // Trích xuất trường "name" từ object
-      if (fname != nullptr) {
-        Serial.printf("  %d: %s\n", mqtt_firmwarecount_glb, fname);
-        if (mqtt_firmwarecount_glb < 100) mqtt_fw_list_glb[mqtt_firmwarecount_glb++] = String(fname);
-      }
+  hexData.toUpperCase();
+  
+  Serial.println("Received hex payload: " + hexData);
+  
+  // Kiểm tra xem có phải gói tin 0xBB (Response từ Gateway) không
+  if (hexData.startsWith("BB")) {
+    // Parse theo format: BB | Status(1B) | Count(1B) | FW_ID(2B) | Ver(2B) | Size(4B) | Force(1B) | CRC(2B)
+    // Tối thiểu 26 ký tự hex (13 bytes) nếu có 1 firmware
+    
+    if (hexData.length() < 26) {
+      Serial.println("ERROR: Invalid 0xBB packet length");
+      return;
     }
     
-    if (mqtt_firmwarecount_glb > 0) {
-      // Chọn ngẫu nhiên một index trong danh sách firmware nhận được
-      randomSeed(millis()); // Khởi tạo hạt giống ngẫu nhiên
-      mqtt_selectedindex_glb = random(0, mqtt_firmwarecount_glb);
-      Serial.printf("Randomly selected firmware: %s (Index: %d)\n", mqtt_fw_list_glb[mqtt_selectedindex_glb].c_str(), mqtt_selectedindex_glb);
+    String statusHex = hexData.substring(2, 4);    // Byte 1: Status
+    String countHex = hexData.substring(4, 6);     // Byte 2: Count
+    String fwIdHex = hexData.substring(6, 10);     // Bytes 3-4: FW_ID
+    String verHex = hexData.substring(10, 14);     // Bytes 5-6: Version
+    String sizeHex = hexData.substring(14, 22);    // Bytes 7-10: Size
+    String forceHex = hexData.substring(22, 24);   // Byte 11: Force
+    String crcHex = hexData.substring(24, 28);     // Bytes 12-13: CRC
+    
+    // Chuyển hex thành số nguyên
+    uint8_t status = (uint8_t)strtol(statusHex.c_str(), NULL, 16);
+    uint8_t count = (uint8_t)strtol(countHex.c_str(), NULL, 16);
+    uint16_t fw_id = (uint16_t)strtol(fwIdHex.c_str(), NULL, 16);
+    uint16_t version = (uint16_t)strtol(verHex.c_str(), NULL, 16);
+    uint32_t size = (uint32_t)strtol(sizeHex.c_str(), NULL, 16);
+    uint8_t force = (uint8_t)strtol(forceHex.c_str(), NULL, 16);
+    
+    Serial.printf("Gateway Response - Status: %d, Count: %d, FW_ID: 0x%04X, Ver: 0x%04X, Size: %u bytes, Force: %d\n",
+                  status, count, fw_id, version, size, force);
+    
+    if (status == 0x01) {  // UPDATE_AVAILABLE
+      mqtt_responsestatus_glb = "UPDATE_AVAILABLE";
+      // Xây dựng tên file firmware từ FW_ID và version
+      mqtt_msg_tgfw_glb = String("fw_") + String(fw_id) + String("_v") + String(version) + String(".bin");
+      Serial.println("Update available: " + mqtt_msg_tgfw_glb);
+      mqtt_loopstop_flg_glb = true;
+    } else if (status == 0x00) {  // UPDATE_UNAVAILABLE
+      mqtt_responsestatus_glb = "UPDATE_UNAVAILABLE";
+      Serial.println("No update available");
+      mqtt_loopstop_flg_glb = true;
+    } else if (status == 0x02) {  // ERROR
+      mqtt_responsestatus_glb = "ERROR";
+      Serial.println("Error response from gateway");
+      mqtt_loopstop_flg_glb = true;
     }
-
-    mqtt_msg_res_glb = "FW_LIST_RETR";
-    mqtt_loopstop_flg_glb = true; 
-  } else if (strcmp(status, "GW_WAIT") == 0 || strcmp(status, "FW_FOUND") == 0 || strcmp(status, "FW_NOT_FOUND") == 0) {
-    mqtt_msg_res_glb = String(message ? message : "");
-    mqtt_loopstop_flg_glb = true;
-  } else if (strcmp(status, "UPDATE_AVAILABLE") == 0) {
-    const char* targetFirmware = doc["targetFirmware"];
-    mqtt_msg_tgfw_glb = String(targetFirmware ? targetFirmware : "");
-    mqtt_msg_res_glb = "Return: Allow to connect and download firmware";
-    mqtt_loopstop_flg_glb = true;
-  } else if (strcmp(status, "UPDATE_UNAVAILABLE") == 0) {
-    mqtt_msg_res_glb = "Error: No new file update found";
-    mqtt_loopstop_flg_glb = true;
+    return;
   }
+  
+  /* {
+    // Fallback: Thử parse JSON để tương thích ngược
+    DynamicJsonDocument doc(1024);
+    DeserializationError error = deserializeJson(doc, payload, length);
+    if (error) {
+      Serial.print("Failed to parse: neither hex nor JSON format");
+      return;
+    }
+    
+    const char* status = doc["status"];
+    if (status == nullptr) return;
+    mqtt_responsestatus_glb = String(status);
+    
+    Serial.printf("JSON Response status: %s\n", status);
+  } */
 }
 
 void func_send_request(PubSubClient& mqtt_client_glb) {
-  JsonDocument doc;
-  String deviceId = WiFi.macAddress();
-  deviceId.replace(":", "");
-  doc["deviceId"] = deviceId;
-  doc["chipId"] = chip_id_def;
-  doc["requestType"] = "UPDATE_REQUEST";
-  String output;
-  serializeJson(doc, output);
-  String requestTopic = "nckhsv/" + deviceId + "/request";
-  mqtt_client_glb.publish(requestTopic.c_str(), output.c_str(), true);
+  // Format: Device_ID(1B) | Control_Code(1B) | FW_ID(2B) | Current_Version(2B) | CRC(2B)
+  // Lấy byte cuối cùng của MAC address làm Device_ID
+  String macAddress = WiFi.macAddress();
+  macAddress.replace(":", "");
+  
+  // Lấy 2 ký tự hex cuối (byte cuối của MAC)
+  uint8_t device_id = (uint8_t)strtol(macAddress.substring(macAddress.length() - 2).c_str(), NULL, 16);
+  uint8_t control_code = 0x01;  // 0x01: Check update
+  uint16_t fw_id = 0x03E8;       // Firmware ID (1000 trong decimal)
+  uint16_t current_version = 0x0019;  // Version 2.5 (25 trong decimal)
+  
+  // Xây dựng payload không có CRC (12 bytes hex = 6 bytes)
+  char payload_no_crc[13];
+  sprintf(payload_no_crc, "%02X%02X%04X%04X", device_id, control_code, fw_id, current_version);
+  
+  // Chuyển hex string thành byte array để tính CRC
+  uint8_t payload_bytes[6];
+  size_t byte_count = hex_string_to_bytes(payload_no_crc, payload_bytes, 6);
+  
+  // Tính CRC-16
+  uint16_t crc_value = calc_crc16(payload_bytes, byte_count);
+  
+  // Xây dựng payload hoàn chỉnh với CRC (định dạng có khoảng trắng để khớp với gateway script)
+  char mqtt_payload[30];
+  sprintf(mqtt_payload, "%02X %02X %04X %04X %04X", device_id, control_code, fw_id, current_version, crc_value);
+  
+  String requestTopic = "nckhsv/" + macAddress + "/request";
+  mqtt_client_glb.publish(requestTopic.c_str(), mqtt_payload, true);
+  
+  Serial.println("Sent UPDATE_REQUEST (hex format): " + String(mqtt_payload));
 }
 
 void func_send_selection(PubSubClient& mqtt_client_glb, String mqtt_fw_list_glb[]) {
-  JsonDocument doc;
+  // Note: Format hoàn chỉnh sẽ là: 0xCC | Selected_FW_ID(2B) | Block_Size(2B) | Protocol(1B) | CRC(2B)
+  // Hiện tại sử dụng JSON cho tương thích ngược
+  
   String deviceId = WiFi.macAddress();
   deviceId.replace(":", "");
+  
+  JsonDocument doc;
   doc["deviceId"] = deviceId;
   doc["chipId"] = chip_id_def;
   doc["isValidate"] = fw_is_validated_glb;
@@ -489,6 +568,8 @@ void func_send_selection(PubSubClient& mqtt_client_glb, String mqtt_fw_list_glb[
   serializeJson(doc, output);
   String requestTopic = "nckhsv/" + deviceId + "/select";
   mqtt_client_glb.publish(requestTopic.c_str(), output.c_str(), true);
+  
+  Serial.println("Sent SELECTION_REQUEST: " + String(mqtt_fw_list_glb[mqtt_selectedindex_glb]));
 }
 
 void func_ping_ftp() {
