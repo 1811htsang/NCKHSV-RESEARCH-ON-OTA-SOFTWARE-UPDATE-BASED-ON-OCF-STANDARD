@@ -2,7 +2,7 @@
 
 # --- CẤU HÌNH BIẾN ---
 WLAN_IFACE="wlp1s0"      # Card Wifi phát mạng
-ETH_IFACE="wlp3s0f4u2u2"         # Card Ethernet nhận internet
+ETH_IFACE="wlp3s0f4u1u2"         # Card Ethernet nhận internet
 SSID="TM420IA"
 WPA_PASS="23521341"
 IP_ADDR="192.168.0.1"
@@ -101,7 +101,9 @@ EOF
 
 echo "[4/6] Kích hoạt IP Forwarding và NAT (Internet Sharing)..."
 sudo sysctl -w net.ipv4.ip_forward=1
-
+iptables -t nat -A POSTROUTING -o $ETH_IFACE -j MASQUERADE
+iptables -A FORWARD -i $ETH_IFACE -o $WLAN_IFACE -m state --state RELATED,ESTABLISHED -j ACCEPT
+iptables -A FORWARD -i $WLAN_IFACE -o $ETH_IFACE -j ACCEPT
 
 echo "[5/6] Khởi chạy dịch vụ..."
 hostapd $HOSTAPD_CONF > /dev/null 2>&1 &

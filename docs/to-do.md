@@ -8,7 +8,8 @@
 - [x] Rewrite lại clear script dành cho MQTT để tương thích với server_script mới
 - [x] Thiết kế bổ sung database hướng sqlite để lưu trữ thông tin thiết bị và trạng thái kết nối
 - [x] Validate lại toàn bộ hệ thống với kịch bản DFU để đảm bảo quá trình cập nhật firmware diễn ra suôn sẻ
-- [ ] Refactor lại wifi host setup để đảm bảo tính ổn định và dễ sử dụng với code style mới
+- [x] Import lại source code trên Jetson Nano để đảm bảo tính tương thích và hiệu suất theo thiết kế mới
+- [ ] Bổ sung data mẫu vào database để phục vụ cho việc test và demo
 - [ ] Thực hiện kiểm tra với kịch bản DFU để đảm bảo quá trình cập nhật firmware diễn ra suôn sẻ
 - [ ] Kiểm tra lại source code trên Jetson Nano để đảm bảo tính tương thích và hiệu suất theo thiết kế mới
 - [ ] Viết báo cáo hoàn thiện NCKH
