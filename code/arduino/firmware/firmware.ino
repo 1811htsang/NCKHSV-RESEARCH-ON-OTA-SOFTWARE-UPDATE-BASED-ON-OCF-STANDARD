@@ -128,7 +128,7 @@ String fw_cur_partition_glb = "";
 /**
  * @brief Khai báo cấu trúc để lưu trữ thông tin firmware có sẵn cho lựa chọn
  */
-typedef struct {
+typedef struct FirmwareOption {
   uint16_t fw_id;
   uint16_t version;
   uint32_t size;
