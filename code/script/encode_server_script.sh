@@ -37,17 +37,17 @@ fi
 script_path_v="./code/script"
 
 # @brief Bổ sung kiểm tra file script để đảm bảo tồn tại trước khi thực thi
-if [[ ! -f "$script_path_v/server_script.sh" ]]; then
+if [[ ! -f "$script_path_v/encode_server_script.sh" ]]; then
   echo -e "${RED}[Error] Server script not found at $script_path_v/server_script.sh!${END}"
   exit 1
 fi
 
 # @brief Khai báo đường dẫn tới database lưu trữ thông tin
-database_path_v="./database"
+database_path_v="./code/data"
 
 # @brief Bổ sung kiểm tra tệp database để đảm bảo tồn tại trước khi thực thi
-if [[ ! -f "$database_path_v/server_db.db" ]]; then
-  echo -e "${RED}[Error] Database not found at $database_path_v/server_db.db!${END}"
+if [[ ! -f "$database_path_v/center_db.db" ]]; then
+  echo -e "${RED}[Error] Database not found at $database_path_v/center_db.db!${END}"
   exit 1
 fi
 
@@ -139,7 +139,7 @@ send_server_manifest_v() {
   local manifest_line_v
   local response_lines_v=""
 
-  manifest_rows_v=$(sqlite3 -separator '|' "$database_path_v/server_db.db" "
+  manifest_rows_v=$(sqlite3 -separator '|' "$database_path_v/center_db.db" "
 WITH active_fw AS (
   SELECT d.device_id, f.fw_id, f.version, f.is_force, d.last_update_timestamp
   FROM devices d

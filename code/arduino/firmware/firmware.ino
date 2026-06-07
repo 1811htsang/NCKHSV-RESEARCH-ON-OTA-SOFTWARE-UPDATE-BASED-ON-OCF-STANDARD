@@ -601,7 +601,7 @@ void func_send_request(PubSubClient& mqtt_client_glb) {
   
   // Xây dựng payload hoàn chỉnh với CRC (không có khoảng trắng để khớp với gateway script)
   char mqtt_payload[30];
-  sprintf(mqtt_payload, "%02X%02X%04X%04X%04X", device_id, control_code, fw_id, current_version, crc_value);
+  sprintf(mqtt_payload, "%02X %02X %04X %04X %04X", device_id, control_code, fw_id, current_version, crc_value);
   
   String requestTopic = "nckhsv/" + macAddress + "/request";
   mqtt_client_glb.publish(requestTopic.c_str(), mqtt_payload, true);

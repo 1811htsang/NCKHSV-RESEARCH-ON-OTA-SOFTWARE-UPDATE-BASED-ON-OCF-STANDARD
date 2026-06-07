@@ -314,6 +314,7 @@ fi
 
 if [[ -z "$local_record_v" ]]; then
   echo -e "${RED}[Error] Firmware $firmware_id_v still not available after sync.${END}"
+  # MQTT to announce ESP32 firmware is not available
   exit 1
 fi
 
