@@ -10,7 +10,8 @@
 - [x] Validate lại toàn bộ hệ thống với kịch bản DFU để đảm bảo quá trình cập nhật firmware diễn ra suôn sẻ
 - [x] Import lại source code trên Jetson Nano để đảm bảo tính tương thích và hiệu suất theo thiết kế mới
 - [x] Bổ sung data mẫu vào database để phục vụ cho việc test và demo
-- [ ] Bổ sung thêm khai báo firmware và sửa đổi lại cấu trúc chương trình sample_firmware để phù hợp với thiết kế mới
+- [x] Bổ sung thêm khai báo firmware và sửa đổi lại cấu trúc chương trình sample_firmware để phù hợp với thiết kế mới
+- [ ] Thiết kế giả lập với kịch bản DFU sử dụng 2 file bash script để mô phỏng quá trình cập nhật firmware
 - [ ] Thực hiện kiểm tra với kịch bản DFU để đảm bảo quá trình cập nhật firmware diễn ra suôn sẻ
 - [ ] Kiểm tra lại source code trên Jetson Nano để đảm bảo tính tương thích và hiệu suất theo thiết kế mới
 - [ ] Viết báo cáo hoàn thiện NCKH
