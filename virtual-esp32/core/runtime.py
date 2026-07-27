@@ -1,13 +1,20 @@
+import time
+
+from config import CHECK_INTERVAL
+
+
 class Runtime:
 
-    def __init__(self, firmware):
+    def __init__(self, device):
 
-        self.firmware = firmware
+        self.device = device
 
     def run(self):
 
-        self.firmware.setup()
+        self.device.setup()
 
         while True:
 
-            self.firmware.loop()
+            self.device.loop()
+
+            time.sleep(CHECK_INTERVAL)

@@ -1,16 +1,11 @@
-import time
-
-
 class Firmware:
 
     VERSION = "1.0"
 
-    def setup(self):
+    def setup(self, device):
 
-        print("Firmware setup()")
+        print("[Firmware] setup()")
 
-    def loop(self):
+    def loop(self, device):
 
-        print("Firmware loop()")
-
-        time.sleep(2)
+        print("[Firmware] Application running")

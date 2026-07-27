@@ -1,19 +1,22 @@
-import json
 import importlib
+
+from storage.flash import Flash
 
 
 class Bootloader:
 
-    def load(self):
+    def __init__(self):
 
-        with open("storage/boot.json") as f:
+        self.flash = Flash()
 
-            boot = json.load(f)
+    def load_firmware(self):
+
+        boot = self.flash.read_boot()
+
+        module_name = boot["firmware"]
 
         module = importlib.import_module(
-            f"firmware.{boot['firmware']}"
+            f"firmware.{module_name}"
         )
 
-        firmware = module.Firmware()
-
-        return firmware
+        return module.Firmware()
