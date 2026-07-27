@@ -2,23 +2,23 @@ from core.bootloader import Bootloader
 from core.device import VirtualESP32
 from core.runtime import Runtime
 
-from network.mqtt_client import MQTTClient
-from ota.ota_manager import OTAManager
+from config import DEVICE_ID
 
-bootloader = Bootloader()
 
-firmware = bootloader.load_firmware()
+def main():
+    bootloader = Bootloader()
 
-mqtt = MQTTClient()
+    firmware = bootloader.load_firmware()
 
-ota = OTAManager()
+    device = VirtualESP32(
+        device_id=DEVICE_ID,
+        firmware=firmware
+    )
 
-device = VirtualESP32(
-    firmware,
-    mqtt,
-    ota
-)
+    runtime = Runtime(device)
 
-runtime = Runtime(device)
+    runtime.run()
 
-runtime.run()
+
+if __name__ == "__main__":
+    main()
