@@ -5,3 +5,5 @@ code/idf/simple-hello-world/.vscode
 code/arduino/libraries/*
 docs/.obsidian
 code/data/central_db.db
+code/python/__pycache__/*
+code/python/ota_protocol/__pycache__/*
